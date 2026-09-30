@@ -28,18 +28,6 @@ https://github.com/user-attachments/assets/71a61d52-f4ad-46e1-8d4d-916fb0ca783f
 
 **Ops console: model metrics, ablation, live latency**
 
-
-https://github.com/user-attachments/assets/5e80aee8-cbe7-4dad-91f7-071826ac57af
-
-
-
-https://github.com/user-attachments/assets/37f5b8e5-d7bb-4c19-a4b7-b75d1514ff58
-
-
-
-
-
-
 <img width="794" height="407" alt="4-ops" src="https://github.com/user-attachments/assets/77e63c2f-cc31-4688-b0e9-151cfc505c19" />
 
 ---
