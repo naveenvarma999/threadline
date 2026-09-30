@@ -3,14 +3,44 @@
 A production-style fashion recommender: a **two-stage model** (candidate retrieval + learning-to-rank)
 trained on retail transactions, served by a **FastAPI** inference service, used through a **React**
 storefront and a **Django** product API, managed from an **Angular** ops console, tracked and versioned
-in **MLflow**, containerised with **Docker** and deployed to **AWS** (ECS Fargate, RDS, S3, CloudFront)
-with **Terraform** and **GitHub Actions**.
+in **MLflow**, containerised with **Docker** and **deployed live on AWS EC2**. A full AWS production
+setup (ECS Fargate, RDS, S3, CloudFront) is also written in **Terraform** with **GitHub Actions** CI/CD.
 
-![Storefront home feed](docs/screenshots/home.png)
+## Demo
 
-| Product page | Ops console |
-|---|---|
-| ![Product page](docs/screenshots/pdp.png) | ![Ops console](docs/screenshots/ops.png) |
+https://github.com/user-attachments/assets/71a61d52-f4ad-46e1-8d4d-916fb0ca783f
+
+
+## Screenshots
+
+**Storefront: personalised home feed with 3D coverflow**
+
+<img width="941" height="439" alt="1-home" src="https://github.com/user-attachments/assets/5a89447e-f4f0-434a-89da-027fc39d1e17" />
+
+**Product page: "Complete the look" and "Similar items"**
+
+<img width="946" height="437" alt="2-product" src="https://github.com/user-attachments/assets/068a95e0-c793-4e41-87ab-048ad8ada304" />
+
+**Bag**
+
+
+<img width="959" height="430" alt="3-bag" src="https://github.com/user-attachments/assets/66f9bb89-7d52-4574-aaa2-bd7c303eff7f" />
+
+**Ops console: model metrics, ablation, live latency**
+
+
+https://github.com/user-attachments/assets/5e80aee8-cbe7-4dad-91f7-071826ac57af
+
+
+
+https://github.com/user-attachments/assets/37f5b8e5-d7bb-4c19-a4b7-b75d1514ff58
+
+
+
+
+
+
+<img width="794" height="407" alt="4-ops" src="https://github.com/user-attachments/assets/77e63c2f-cc31-4688-b0e9-151cfc505c19" />
 
 ---
 
@@ -26,7 +56,23 @@ The ops console shows the serving model's offline metrics against baselines, the
 importance, live latency percentiles, cache hit rate and click-through by placement, and lets the team
 promote a registered model version, which the inference service hot-reloads.
 
-## Architecture
+## Deployment
+
+### Live: one AWS EC2 server (what the demo runs on)
+
+```
+Browser ──► EC2 (Amazon Linux 2023, Docker Compose)
+              ├─ storefront   React build served by nginx, proxies /api   :80
+              ├─ ops          Angular build served by nginx                :8081
+              ├─ app_api      Django + DRF (gunicorn)
+              ├─ inference    FastAPI, loads the trained model bundle
+              └─ postgres     shop data, events
+```
+
+The model is trained offline, and the trained bundle is copied to the server. Setup steps are in
+[docs/EC2_DEPLOY.md](docs/EC2_DEPLOY.md).
+
+### Designed for production: ECS Fargate (Terraform, validated, not applied)
 
 ```mermaid
 flowchart LR
@@ -47,7 +93,10 @@ flowchart LR
   train -->|reload| inf
 ```
 
-### The model
+The Terraform passes `terraform validate` in CI but has not been applied, because it costs more than a
+single server. Guide: [docs/AWS_DEPLOY.md](docs/AWS_DEPLOY.md).
+
+## The model
 
 ```
 stage 1: retrieval (~100 candidates per user)          stage 2: ranking
@@ -121,10 +170,10 @@ Vectorising the online feature path in NumPy is the next optimisation.
 | PostgreSQL | Shop data and MLflow metadata |
 | React + TypeScript + Vite | Customer storefront |
 | Angular 18 | Internal ops console |
-| Docker, Docker Compose | One image per service; full local stack |
-| AWS | ECS Fargate, RDS, S3, CloudFront, ECR, Cloud Map, EventBridge Scheduler, CloudWatch, SSM |
-| Terraform | All AWS infrastructure (validated) |
-| GitHub Actions | CI (tests, lint, builds, `terraform validate`) and CD (ECR + ECS + S3/CloudFront) |
+| Docker, Docker Compose | One image per service; full local stack; live EC2 deployment |
+| AWS | **Live:** EC2. **In Terraform (validated, not applied):** ECS Fargate, RDS, S3, CloudFront, ECR, Cloud Map, EventBridge Scheduler, CloudWatch, SSM |
+| Terraform | All ECS/RDS/CloudFront infrastructure (validated) |
+| GitHub Actions | CI (tests, lint, builds, `terraform validate`); CD workflow for ECS written |
 
 ## Repository layout
 
@@ -138,13 +187,14 @@ web/storefront/         React storefront
 web/ops-console/        Angular ops console
 infra/mlflow/           MLflow server image
 infra/terraform/        AWS infrastructure
+scripts/                EC2 setup
 .github/workflows/      CI and deploy
-docs/                   design decisions, AWS guide, screenshots
+docs/                   design decisions, AWS and EC2 guides
 ```
 
 ## Run it locally
 
-Requirements: Python 3.11, Node 22. About 10 minutes on a laptop CPU.
+Requirements: Python 3.11 or 3.12, Node 22. About 10 minutes on a laptop CPU.
 
 ```bash
 make setup            # Python packages (CPU PyTorch) and npm packages
@@ -169,11 +219,6 @@ make up    # Postgres, Redis, MLflow → one training run → inference, API, st
 Storefront http://localhost:8080 · ops console http://localhost:8081 (token `local-ops-token`) ·
 MLflow http://localhost:5000
 
-### On AWS
-
-See [docs/AWS_DEPLOY.md](docs/AWS_DEPLOY.md), including the cost warning. New AWS accounts no longer get
-a 12-month free tier; set the budget alert and destroy the stack after demos.
-
 ## Using the real H&M data
 
 1. Read the rules of the Kaggle competition *H&M Personalized Fashion Recommendations*. They decide
@@ -196,6 +241,8 @@ path and admin auth, and the Django feed, events, checkout and ops permissions.
 ## Known limitations
 
 - No real users: no online A/B test. Ops-console engagement comes from demo traffic.
+- The live EC2 demo is HTTP only, runs on one machine and has no MLflow server, so the ops console's
+  Models page shows no registry there.
 - The promotion gate compares models evaluated on different test weeks. It should re-score the
   champion on the challenger's test week.
 - Pointwise ranker. LambdaRank (LightGBM) is the obvious next experiment.
