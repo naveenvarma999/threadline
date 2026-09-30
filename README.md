@@ -235,6 +235,3 @@ path and admin auth, and the Django feed, events, checkout and ops permissions.
 - Pointwise ranker. LambdaRank (LightGBM) is the obvious next experiment.
 - History updates online only through the session items sent with each request.
 
-
-https://github.com/user-attachments/assets/7e737c14-7fc0-4aae-9f39-e7e54ebf2dcc
-
