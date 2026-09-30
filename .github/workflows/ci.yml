@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ml:
+    name: ML pipeline tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e "ml[dev]" mlflow==3.16.1 faiss-cpu==1.15.1
+      - run: ruff check ml
+      - run: pytest ml/tests -q
+      - name: Smoke-train on a small synthetic dataset (no registry)
+        env: { TL_HISTORY_WEEKS: "10", TL_TT_EPOCHS: "1", TL_CONTENT_EPOCHS: "2" }
+        run: |
+          pip install tensorflow-cpu==2.21.0
+          cd ml && python -m threadline.train --source synthetic --no-refit --no-register --max-users 3000
+
+  inference:
+    name: Inference service tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install ./ml -r services/inference/requirements.txt pytest
+      - run: cd services/inference && pytest -q
+
+  app-api:
+    name: Django API tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: t, POSTGRES_PASSWORD: t, POSTGRES_DB: t }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U t" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://t:t@localhost:5432/t
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r services/app_api/requirements.txt
+      - run: cd services/app_api && python manage.py makemigrations --check --dry-run && python manage.py test
+
+  frontends:
+    name: Build storefront and ops console
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd web/storefront && npm install --no-audit --no-fund && npm run build
+      - run: cd web/ops-console && npm install --no-audit --no-fund && npx ng build
+
+  docker:
+    name: Build container images
+    runs-on: ubuntu-latest
+    needs: [inference, app-api]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f services/inference/Dockerfile -t threadline-inference .
+      - run: docker build -t threadline-app-api services/app_api
+      - run: docker build -t threadline-mlflow infra/mlflow
+
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: cd infra/terraform && terraform fmt -check && terraform init -backend=false && terraform validate

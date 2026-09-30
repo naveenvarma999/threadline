@@ -1,0 +1,97 @@
+# Local production-like stack.
+#
+#   docker compose up -d postgres redis mlflow           # infrastructure
+#   docker compose run --rm trainer                      # train, register and promote a model
+#   docker compose up -d inference app_api storefront ops
+#
+# Storefront: http://localhost:8080   Ops console: http://localhost:8081
+# MLflow UI:  http://localhost:5000   Django admin: http://localhost:8000/admin/
+
+x-mlflow-env: &mlflow-env
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+  TL_REGISTERED_MODEL: threadline-recommender
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: threadline
+      POSTGRES_PASSWORD: threadline
+      POSTGRES_DB: threadline
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threadline"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  mlflow:
+    build: infra/mlflow
+    environment:
+      BACKEND_STORE_URI: postgresql://threadline:threadline@postgres:5432/mlflow
+      ARTIFACTS_DESTINATION: /mlartifacts
+    volumes: [mlartifacts:/mlartifacts]
+    ports: ["5000:5000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  trainer:
+    build: { context: ., dockerfile: ml/Dockerfile }
+    profiles: ["train"]
+    environment:
+      <<: *mlflow-env
+      TL_PROCESSED_DIR: /app/data/processed
+      TL_RAW_HM_DIR: /app/data/raw/hm
+      TL_ARTIFACTS_DIR: /app/artifacts
+      INFERENCE_RELOAD_URL: http://inference:8001/admin/reload
+      INFERENCE_ADMIN_TOKEN: local-admin-token
+    volumes:
+      - ./data:/app/data
+      - ./artifacts:/app/artifacts
+    depends_on: [mlflow]
+
+  inference:
+    build: { context: ., dockerfile: services/inference/Dockerfile }
+    environment:
+      <<: *mlflow-env
+      MODEL_URI: models:/threadline-recommender@champion
+      REDIS_URL: redis://redis:6379/0
+      INFERENCE_ADMIN_TOKEN: local-admin-token
+    ports: ["8001:8001"]
+    depends_on: [mlflow, redis]
+
+  app_api:
+    build: services/app_api
+    environment:
+      <<: *mlflow-env
+      DATABASE_URL: postgresql://threadline:threadline@postgres:5432/threadline
+      DJANGO_SECRET_KEY: local-only-secret
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: "*"
+      INFERENCE_URL: http://inference:8001
+      INFERENCE_ADMIN_TOKEN: local-admin-token
+      OPS_TOKEN: local-ops-token
+      SEED_FROM: /data/processed
+      SEED_CUSTOMERS: "3000"
+    volumes: ["./data:/data:ro"]
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      inference: { condition: service_started }
+
+  storefront:
+    build: web/storefront
+    ports: ["8080:80"]
+    depends_on: [app_api]
+
+  ops:
+    build: web/ops-console
+    ports: ["8081:80"]
+    depends_on: [app_api]
+
+volumes:
+  pgdata:
+  mlartifacts:

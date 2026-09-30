@@ -1,0 +1,3 @@
+alert_email        = "you@example.com"
+monthly_budget_usd = 40
+# raw_data_s3_prefix = "s3://my-hm-data-bucket/hm"   # leave unset to train on synthetic data

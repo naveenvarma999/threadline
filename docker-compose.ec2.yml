@@ -1,0 +1,70 @@
+# Single-server deployment (AWS EC2 or any Linux VM with Docker).
+#
+# The model is trained on your laptop; this stack only serves it. Before starting, copy these
+# two folders from your laptop into the project folder on the server:
+#   data/processed/      (articles/customers/transactions Parquet, used to seed the shop DB)
+#   artifacts/bundle/    (the trained model bundle served by the inference API)
+#
+#   cp .env.ec2.example .env      # then edit the passwords/tokens
+#   docker compose -f docker-compose.ec2.yml --env-file .env up -d --build
+#
+# Storefront:   http://<server-ip>/          (port 80, open to everyone)
+# Ops console:  http://<server-ip>:8081/     (restrict port 8081 to your IP in the security group)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: threadline
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: threadline
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threadline"]
+      interval: 5s
+      retries: 20
+
+  inference:
+    build: { context: ., dockerfile: services/inference/Dockerfile }
+    restart: unless-stopped
+    environment:
+      BUNDLE_DIR: /bundle
+      INFERENCE_ADMIN_TOKEN: ${INFERENCE_ADMIN_TOKEN:?set INFERENCE_ADMIN_TOKEN in .env}
+      CACHE_TTL_SECONDS: "300"
+    volumes: ["./artifacts/bundle:/bundle:ro"]
+    # Not published: only the API container talks to it.
+
+  app_api:
+    build: services/app_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://threadline:${POSTGRES_PASSWORD}@postgres:5432/threadline
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: "*"
+      INFERENCE_URL: http://inference:8001
+      INFERENCE_ADMIN_TOKEN: ${INFERENCE_ADMIN_TOKEN}
+      OPS_TOKEN: ${OPS_TOKEN:?set OPS_TOKEN in .env}
+      SEED_FROM: /data/processed
+      SEED_CUSTOMERS: "3000"
+      GUNICORN_WORKERS: "2"
+    volumes: ["./data:/data:ro"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      inference: { condition: service_started }
+
+  storefront:
+    build: web/storefront
+    restart: unless-stopped
+    ports: ["80:80"]
+    depends_on: [app_api]
+
+  ops:
+    build: web/ops-console
+    restart: unless-stopped
+    ports: ["8081:80"]
+    depends_on: [app_api]
+
+volumes:
+  pgdata:

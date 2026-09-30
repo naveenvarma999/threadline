@@ -1,0 +1,98 @@
+name: Deploy
+
+# Build images, push to ECR, roll ECS services, publish both frontends.
+# Needs repository variables: AWS_REGION, AWS_DEPLOY_ROLE_ARN (an IAM role trusted for GitHub OIDC),
+# STOREFRONT_BUCKET, OPS_BUCKET, STOREFRONT_CF_ID, OPS_CF_ID, ECR_REGISTRY (e.g. 123456789012.dkr.ecr.eu-west-2.amazonaws.com)
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  REGISTRY: ${{ vars.ECR_REGISTRY }}
+  TAG: ${{ github.sha }}
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { name: inference, context: ".", file: services/inference/Dockerfile }
+          - { name: app-api, context: services/app_api, file: services/app_api/Dockerfile }
+          - { name: mlflow, context: infra/mlflow, file: infra/mlflow/Dockerfile }
+          - { name: trainer, context: ".", file: ml/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/threadline/${{ matrix.name }}:${{ env.TAG }}
+            ${{ env.REGISTRY }}/threadline/${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  services:
+    needs: images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [mlflow, inference, app-api]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Render task definition with the new image
+        run: |
+          aws ecs describe-task-definition --task-definition threadline-${{ matrix.service }} \
+            --query taskDefinition > taskdef.json
+      - id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: taskdef.json
+          container-name: ${{ matrix.service }}
+          image: ${{ env.REGISTRY }}/threadline/${{ matrix.service }}:${{ env.TAG }}
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ matrix.service }}
+          cluster: threadline
+          wait-for-service-stability: true
+
+  frontends:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Storefront
+        run: |
+          cd web/storefront && npm install --no-audit --no-fund && npm run build
+          aws s3 sync dist "s3://${{ vars.STOREFRONT_BUCKET }}" --delete --cache-control "public,max-age=31536000,immutable" --exclude index.html
+          aws s3 cp dist/index.html "s3://${{ vars.STOREFRONT_BUCKET }}/index.html" --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "${{ vars.STOREFRONT_CF_ID }}" --paths "/index.html"
+      - name: Ops console
+        run: |
+          cd web/ops-console && npm install --no-audit --no-fund && npx ng build
+          aws s3 sync dist/ops-console/browser "s3://${{ vars.OPS_BUCKET }}" --delete --cache-control "public,max-age=31536000,immutable" --exclude index.html
+          aws s3 cp dist/ops-console/browser/index.html "s3://${{ vars.OPS_BUCKET }}/index.html" --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "${{ vars.OPS_CF_ID }}" --paths "/index.html"
