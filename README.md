@@ -8,27 +8,26 @@ setup (ECS Fargate, RDS, S3, CloudFront) is also written in **Terraform** with *
 
 ## Demo
 
-https://github.com/user-attachments/assets/71a61d52-f4ad-46e1-8d4d-916fb0ca783f
+https://github.com/user-attachments/assets/5f142a43-0427-4d47-bf66-0436de1cac39
 
 
 ## Screenshots
 
 **Storefront: personalised home feed with 3D coverflow**
+<img width="941" height="439" alt="1-home" src="https://github.com/user-attachments/assets/8ad4ae29-e775-492e-bc12-0bb67de07c08" />
 
-<img width="941" height="439" alt="1-home" src="https://github.com/user-attachments/assets/5a89447e-f4f0-434a-89da-027fc39d1e17" />
 
 **Product page: "Complete the look" and "Similar items"**
+<img width="946" height="437" alt="2-product" src="https://github.com/user-attachments/assets/e034f338-2af9-4ff2-bb69-bcaf8191c384" />
 
-<img width="946" height="437" alt="2-product" src="https://github.com/user-attachments/assets/068a95e0-c793-4e41-87ab-048ad8ada304" />
+
 
 **Bag**
+<img width="959" height="430" alt="3-bag" src="https://github.com/user-attachments/assets/45808ba5-5d14-4096-a457-8ec262c1523e" />
 
-
-<img width="959" height="430" alt="3-bag" src="https://github.com/user-attachments/assets/66f9bb89-7d52-4574-aaa2-bd7c303eff7f" />
 
 **Ops console: model metrics, ablation, live latency**
-
-<img width="794" height="407" alt="4-ops" src="https://github.com/user-attachments/assets/77e63c2f-cc31-4688-b0e9-151cfc505c19" />
+<img width="794" height="407" alt="4-ops" src="https://github.com/user-attachments/assets/6bcf6d4f-ad48-4d95-ae18-976be8a8c346" />
 
 ---
 
@@ -72,8 +71,8 @@ flowchart LR
   cf2 -->|/api/ops| alb
   alb --> dj[Django + DRF<br/>ECS Fargate]
   dj --> rds[(RDS Postgres)]
-  dj -->|/recommend| inf[FastAPI inference<br/>ECS Fargate, autoscaled]
-  inf -->|models:/...@champion| mlf[MLflow server<br/>ECS Fargate]
+  dj -->|"/recommend"| inf[FastAPI inference<br/>ECS Fargate, autoscaled]
+  inf -->|"loads champion model"| mlf[MLflow server<br/>ECS Fargate]
   mlf --> rds
   mlf --> s3c[(S3 artifacts)]
   sched[EventBridge weekly] --> train[Training task<br/>ECS Fargate]
@@ -235,3 +234,7 @@ path and admin auth, and the Django feed, events, checkout and ops permissions.
   champion on the challenger's test week.
 - Pointwise ranker. LambdaRank (LightGBM) is the obvious next experiment.
 - History updates online only through the session items sent with each request.
+
+
+https://github.com/user-attachments/assets/7e737c14-7fc0-4aae-9f39-e7e54ebf2dcc
+
