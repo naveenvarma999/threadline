@@ -46,7 +46,7 @@ function save(key: string, value: unknown) {
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [sessionId] = useState(() => {
     const existing = load<string | null>("tl.session", null);
-    const id = existing ?? crypto.randomUUID();
+    const id = existing ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
     save("tl.session", id);
     return id;
   });
