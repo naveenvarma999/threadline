@@ -205,19 +205,29 @@ def has_real_hm(paths: Paths) -> bool:
     return all((paths.raw_hm / f).exists() for f in HM_FILES)
 
 
-def load_raw_hm(paths: Paths) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def load_raw_hm(paths: Paths, history_weeks: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Read the H&M CSVs, keeping only the trailing ``history_weeks`` of transactions and the
+    customers and articles that appear in them (the full file is ~31M rows)."""
     d = paths.raw_hm
     log.info("Reading real H&M data from %s", d)
-    articles = pd.read_csv(d / "articles.csv", dtype={"article_id": np.int64}, usecols=ARTICLE_COLUMNS)
-    customers = pd.read_csv(
-        d / "customers.csv",
-        usecols=["customer_id", "age", "club_member_status", "fashion_news_frequency", "postal_code"],
-    )
     tx = pd.read_csv(
         d / "transactions_train.csv",
+        engine="pyarrow",
         dtype={"article_id": np.int64, "price": np.float32, "sales_channel_id": np.int8},
         parse_dates=["t_dat"],
     )
+    if history_weeks:
+        start = tx["t_dat"].max() - pd.Timedelta(days=7 * history_weeks - 1)
+        tx = tx[tx["t_dat"] >= start].reset_index(drop=True)
+    log.info("Kept %d transactions from %s to %s", len(tx), tx["t_dat"].min().date(), tx["t_dat"].max().date())
+    customers = pd.read_csv(
+        d / "customers.csv",
+        engine="pyarrow",
+        usecols=["customer_id", "age", "club_member_status", "fashion_news_frequency", "postal_code"],
+    )
+    customers = customers[customers["customer_id"].isin(tx["customer_id"].unique())]
+    articles = pd.read_csv(d / "articles.csv", dtype={"article_id": np.int64}, usecols=ARTICLE_COLUMNS)
+    articles = articles[articles["article_id"].isin(tx["article_id"].unique())]
     return articles, customers, tx
 
 
@@ -232,6 +242,16 @@ def prepare(
     tx = tx[weeks_ago < cfg.history_weeks].copy()
     weeks_ago = weeks_ago[tx.index]
     tx["week"] = (cfg.history_weeks - 1 - weeks_ago).astype(np.int16)
+
+    if cfg.max_customers:
+        active = tx["customer_id"].unique()
+        if len(active) > cfg.max_customers:
+            rng = np.random.default_rng(cfg.seed)
+            keep = set(rng.choice(active, size=cfg.max_customers, replace=False))
+            tx = tx[tx["customer_id"].isin(keep)]
+            customers = customers[customers["customer_id"].isin(keep)]
+            articles = articles[articles["article_id"].isin(tx["article_id"].unique())]
+            log.info("Sampled %d of %d active customers", cfg.max_customers, len(active))
 
     customers = customers.copy()
     customers["age"] = customers["age"].fillna(customers["age"].median()).astype(np.float32)
@@ -276,7 +296,7 @@ def load_processed(out_dir: Path) -> Dataset:
 def build_dataset(paths: Paths, cfg: TrainConfig, source: str = "auto") -> tuple[Dataset, str]:
     """Load real H&M data when present (or when ``source='hm'``), otherwise synthetic."""
     if source == "hm" or (source == "auto" and has_real_hm(paths)):
-        raw, name = load_raw_hm(paths), "hm"
+        raw, name = load_raw_hm(paths, cfg.history_weeks), "hm"
     else:
         log.info("Real H&M files not found in %s; generating synthetic data", paths.raw_hm)
         raw, name = generate_synthetic(n_weeks=max(cfg.history_weeks, 8), seed=cfg.seed), "synthetic"

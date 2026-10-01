@@ -24,6 +24,9 @@ class Paths:
 class TrainConfig:
     # How many trailing weeks of transactions to keep (keeps the full H&M set laptop-sized).
     history_weeks: int = int(os.environ.get("TL_HISTORY_WEEKS", 16))
+    # Random sample of active customers to keep (0 = all). Keeps real H&M runs within laptop RAM
+    # and keeps the serving bundle small enough for a 2 GB server.
+    max_customers: int = int(os.environ.get("TL_MAX_CUSTOMERS", 0))
     # Label weeks used to train the ranker, counted back from the validation week.
     ranker_train_weeks: int = int(os.environ.get("TL_RANKER_TRAIN_WEEKS", 3))
     k: int = 12  # H&M metric is MAP@12
